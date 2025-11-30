@@ -152,7 +152,7 @@ export WANDB_API_KEY="your_key_here"
 ### Run training
 
 ```bash
-python train.py
+python src/80m/train.py
 ```
 
 ---
