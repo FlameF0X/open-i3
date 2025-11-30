@@ -4,9 +4,6 @@
 
 Designed for maximum training efficiency on consumer hardware, this repository contains the complete training pipeline used to create **i3-80M** — the second model in the i3 series, scaling up from the original i3-22M with improved architecture and multi-dataset training.
 
-> **TIP**
-> Try the model directly in your browser: i3-80M Space
-
 ---
 
 # The Architecture
