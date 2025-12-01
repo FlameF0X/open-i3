@@ -142,3 +142,13 @@ This project is licensed under the Apache 2.0 License.
 ---
 
 **Questions?** Open an issue on GitHub!
+
+## Star History
+
+<a href="https://www.star-history.com/#FlameF0X/open-i3&type=timeline&legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=FlameF0X/open-i3&type=timeline&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=FlameF0X/open-i3&type=timeline&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=FlameF0X/open-i3&type=timeline&legend=bottom-right" />
+ </picture>
+</a>
