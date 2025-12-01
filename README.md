@@ -152,3 +152,5 @@ This project is licensed under the Apache 2.0 License.
    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=FlameF0X/open-i3&type=timeline&legend=bottom-right" />
  </picture>
 </a>
+
+**READ MORE HERE https://deepwiki.com/FlameF0X/open-i3**
