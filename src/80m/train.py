@@ -453,8 +453,8 @@ class CombinedDataset:
     # Map dataset name to the column containing the text data
     DATASET_COLUMN_MAP = {
         'agentlans/high-quality-english-sentences': 'text', 
-        'roneneldan/TinyStories': 'text',                  
-        'starhopp3r/TinyChat': 'text',                       
+        'roneneldan/TinyStories': 'text',                   
+        'starhopp3r/TinyChat': 'text',                         
     }
     
     def __init__(self, dataset_names, seq_len=256, vocab_path=None, max_samples=None):
@@ -558,7 +558,7 @@ class CombinedDataset:
 # ================ #
 # Export Utilities #
 # ================ #
-def generate_model_files(model, dataset, output_dir="i3_model_hf"):
+def generate_model_files(model, dataset, output_dir="i3-model-artifacts"):
     """Generates HuggingFace-compatible model files (.bin and config.json)"""
     os.makedirs(output_dir, exist_ok=True)
     print(f"\nGenerating model files in: {output_dir}/")
@@ -633,7 +633,8 @@ def train_i3_on_combined_datasets():
     
     init_wandb(config)
     
-    vocab_path = "chunk_vocab_combined.json"
+    # MODIFIED: Changed file name to generic HF style
+    vocab_path = "tokenizer.json"
     
     # 1. Load Data
     print("\nLoading dataset...")
@@ -723,11 +724,11 @@ def train_i3_on_combined_datasets():
                 best_loss = avg_loss
                 print(f"✓ New best loss: {best_loss:.4f}")
                 
-                # Save best
+                # MODIFIED: Changed checkpoint name to HF style (.bin)
                 torch.save({
                     'model_state_dict': model.state_dict(),
                     'config': config
-                }, "checkpoint_best.pt")
+                }, "pytorch_model_best.bin")
             
             # Simple Generation Test
             prompts = ["hello", "user: tell me", "once upon a time"]
