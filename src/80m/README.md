@@ -114,6 +114,29 @@ The model is designed for consumer hardware:
 - **Power Draw**: ~40W
 - **Throughput**: 100–550 tokens/second
 
+### VRAM Usage by Context Window
+
+Tested on Tesla P100-PCIE-16GB:
+
+| Context Window | VRAM Usage | Status |
+|----------------|------------|--------|
+| 128 tokens     | 0.73 GB    | ✅ OK  |
+| 256 tokens     | 0.75 GB    | ✅ OK  |
+| 512 tokens     | 1.10 GB    | ✅ OK  |
+| 1024 tokens    | 2.07 GB    | ✅ OK  |
+| 2048 tokens    | 4.70 GB    | ✅ OK  |
+| 4096 tokens    | 13.53 GB   | ✅ OK  |
+| 8192 tokens    | N/A        | ❌ FAILED |
+
+<img width="873" height="573" alt="image" src="https://github.com/user-attachments/assets/35d15dd6-aa02-4c75-9470-6c5685238f0e" />
+
+**Key Insights:**
+- Default 256 token context uses minimal VRAM (~0.75 GB)
+- Linear growth up to 2048 tokens
+- Exponential growth beyond 2048 tokens
+- 16GB VRAM supports up to 4096 token context
+- Ideal for consumer GPUs with 8GB+ VRAM
+
 ### Expected Training Progress
 
 | Metric        | Initial | Final |
