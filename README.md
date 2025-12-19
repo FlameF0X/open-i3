@@ -1,3 +1,5 @@
+> This Readme is outdated
+
 # open-i3
 
 A novel hybrid language model combining RWKV time-mixing, Mamba state-space dynamics, and standard Multi-Head Attention for efficient training on consumer hardware.
