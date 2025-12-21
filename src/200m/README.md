@@ -65,7 +65,7 @@ This formulation enables stable, linear-time recurrence while preserving token-l
 
 ```bash
 git clone https://github.com/FlameF0X/open-i3.git
-cd i3-200m
+cd 200m
 pip install torch numpy wandb datasets tokenizers
 ```
 
