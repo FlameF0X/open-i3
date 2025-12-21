@@ -64,8 +64,8 @@ This formulation enables stable, linear-time recurrence while preserving token-l
 ### Installation
 
 ```bash
-git clone https://github.com/your-repo/i3-200m-redherring.git
-cd i3-200m-redherring
+git clone https://github.com/FlameF0X/open-i3.git
+cd i3-200m
 pip install torch numpy wandb datasets tokenizers
 ```
 
