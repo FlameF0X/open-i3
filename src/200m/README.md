@@ -102,4 +102,4 @@ Hyperparameters such as `d_model`, `lr`, and layer counts can be modified in the
 
 ## License
 
-MIT License. See the `LICENSE` file for details.
+Apache-2.0
