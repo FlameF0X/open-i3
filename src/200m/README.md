@@ -106,7 +106,7 @@ If you use this code, please cite:
 
 ```bibtex
 @software{i3-200M,
-  title={i3-BERT: Hybrid Linear–Quadratic LLM},
+  title={i3-200M: Hybrid Linear–Quadratic LLM},
   author={FlameF0X},
   year={2025},
   url={https://github.com/FlameF0X/open-i3}
