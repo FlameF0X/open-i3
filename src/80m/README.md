@@ -271,7 +271,13 @@ If you use i3-80M in your research, please cite:
   year={2023}
 }
 ```
+If you use this code, please cite:
 
----
-
-**Need help?** Check the main repository [README](../../README.md) or open an issue on GitHub.
+```bibtex
+@software{i3bert,
+  title={i3-BERT: Hybrid RWKV-Transformer for Efficient Pre-training},
+  author={FlameF0X},
+  year={2024},
+  url={https://github.com/FlameF0X/open-i3}
+}
+```
