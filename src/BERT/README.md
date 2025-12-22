@@ -217,7 +217,7 @@ If you use this code, please cite:
 @software{i3bert,
   title={i3-BERT: Hybrid RWKV-Transformer for Efficient Pre-training},
   author={FlameF0X},
-  year={2024},
+  year={2025},
   url={https://github.com/FlameF0X/open-i3}
 }
 ```
