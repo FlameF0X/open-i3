@@ -372,7 +372,7 @@ class BertDatasetManager:
     3. Generate 'Next Sentence Prediction' (NSP) pairs (50% IsNext, 50% NotNext).
     4. Apply 'Masked Language Model' (MLM) masking (15% of tokens).
     """
-    def __init__(self, dataset_names, tokenizer_manager, seq_len=128):
+    def __init__(self, dataset_config, tokenizer_manager, seq_len=128):
         self.tokenizer = tokenizer_manager
         self.seq_len = seq_len
         self.CLS_TOKEN_ID = 2
@@ -382,11 +382,12 @@ class BertDatasetManager:
         self.VOCAB_SIZE = tokenizer_manager.vocab_size
 
         self.datasets = []
-        for name in dataset_names:
+        for name, text_col in dataset_config.items():
             try:
                 ds = load_dataset(name, split='train', streaming=True)
-                self.datasets.append(iter(ds))
-                print(f"✓ Streaming: {name}")
+                # Store both the iterator and the specific text column name for this dataset
+                self.datasets.append({'iter': iter(ds), 'col': text_col})
+                print(f"✓ Streaming: {name} (col: {text_col})")
             except Exception as e:
                 print(f"❌ Failed to load {name}: {e}")
         
@@ -395,9 +396,12 @@ class BertDatasetManager:
 
     def _get_next_text_chunk(self):
         try:
-            dataset_iter = self.datasets[self.current_ds_idx]
+            ds_data = self.datasets[self.current_ds_idx]
+            dataset_iter = ds_data['iter']
+            text_col = ds_data['col']
+            
             item = next(dataset_iter)
-            text = item.get('text', '')
+            text = item.get(text_col, '')
             return text
         except StopIteration:
             self.current_ds_idx = (self.current_ds_idx + 1) % len(self.datasets)
@@ -486,17 +490,17 @@ class BPETokenizerManager:
         self.model_path = model_path
         self.tokenizer = None
 
-    def train_or_load(self, dataset_names):
+    def train_or_load(self, dataset_config):
         if os.path.exists(self.model_path):
             print(f"Loading existing tokenizer from {self.model_path}...")
             self.tokenizer = Tokenizer.from_file(self.model_path)
         else:
             print("Training new Tokenizer...")
-            self._train(dataset_names)
+            self._train(dataset_config)
         self.vocab_size = self.tokenizer.get_vocab_size()
         print(f"Tokenizer Ready. Vocab: {self.vocab_size}")
 
-    def _train(self, dataset_names):
+    def _train(self, dataset_config):
         tokenizer = Tokenizer(models.BPE())
         tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
         tokenizer.decoder = decoders.ByteLevel()
@@ -504,11 +508,11 @@ class BPETokenizerManager:
         trainer = trainers.BpeTrainer(vocab_size=self.vocab_size, special_tokens=special_tokens, min_frequency=2, show_progress=True)
         
         def batch_iterator():
-            for name in dataset_names:
+            for name, text_col in dataset_config.items():
                 ds = load_dataset(name, split='train', streaming=True)
                 for i, item in enumerate(ds):
                     if i > 10000: break 
-                    yield item.get('text', '')
+                    yield item.get(text_col, '')
 
         tokenizer.train_from_iterator(batch_iterator(), trainer=trainer)
         tokenizer.save(self.model_path)
@@ -522,7 +526,11 @@ class BPETokenizerManager:
 # ============================================================================
 def train():
     cfg = ModelConfig()
-    DATASET_NAMES = ['HuggingFaceFW/fineweb-edu']
+    
+    # Updated: Now a dictionary mapping dataset_name -> text_column_name
+    DATASET_CONFIG = {
+        'HuggingFaceFW/fineweb-edu': 'text'
+    }
 
     os.environ['WANDB_API_KEY'] = WANDB_API_KEY
     wandb.init(project=WANDB_PROJECT, config=vars(cfg), name="i3-BERT-116M")
@@ -531,8 +539,8 @@ def train():
 
     # 1. Tokenizer & Dataset
     tokenizer_manager = BPETokenizerManager()
-    tokenizer_manager.train_or_load(DATASET_NAMES)
-    bert_dataset = BertDatasetManager(DATASET_NAMES, tokenizer_manager, seq_len=cfg.seq_len)
+    tokenizer_manager.train_or_load(DATASET_CONFIG)
+    bert_dataset = BertDatasetManager(DATASET_CONFIG, tokenizer_manager, seq_len=cfg.seq_len)
 
     # 2. Hybrid Model
     model = i3BertModel(
