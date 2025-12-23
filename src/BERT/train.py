@@ -8,6 +8,7 @@ import os
 import json
 import wandb
 import random
+import re
 from collections import deque
 from datasets import load_dataset
 from tokenizers import Tokenizer, models, trainers, pre_tokenizers, decoders, processors
@@ -366,11 +367,10 @@ class BertDatasetManager:
     """
     Manages data streaming and dynamic BERT masking.
     
-    STRATEGY:
-    1. Stream text from HuggingFace to avoid RAM issues.
-    2. Buffer sentences.
-    3. Generate 'Next Sentence Prediction' (NSP) pairs (50% IsNext, 50% NotNext).
-    4. Apply 'Masked Language Model' (MLM) masking (15% of tokens).
+    UPDATED STRATEGY:
+    1. Loads Wikipedia + BookCorpus (Classic BERT recipe).
+    2. Uses Regex-based splitting to handle proper names and abbreviations (e.g., U.S.A.).
+    3. Buffers sentences and generates NSP pairs.
     """
     def __init__(self, dataset_config, tokenizer_manager, seq_len=128):
         self.tokenizer = tokenizer_manager
@@ -384,8 +384,14 @@ class BertDatasetManager:
         self.datasets = []
         for name, text_col in dataset_config.items():
             try:
-                ds = load_dataset(name, split='train', streaming=True)
-                # Store both the iterator and the specific text column name for this dataset
+                # Specific logic for Wikipedia configuration
+                if 'wikipedia' in name:
+                    # '20220301.en' is a common dump date for English wiki
+                    ds = load_dataset(name, "20220301.en", split='train', streaming=True, trust_remote_code=True)
+                else:
+                    ds = load_dataset(name, split='train', streaming=True, trust_remote_code=True)
+                
+                # Store iterator and column name
                 self.datasets.append({'iter': iter(ds), 'col': text_col})
                 print(f"✓ Streaming: {name} (col: {text_col})")
             except Exception as e:
@@ -393,6 +399,13 @@ class BertDatasetManager:
         
         self.current_ds_idx = 0
         self.buffer = []
+        
+        # Regex for smarter sentence splitting:
+        # 1. Negative Lookbehind (?<!\w\.\w.): Don't split "U.S.A."
+        # 2. Negative Lookbehind (?<![A-Z][a-z]\.): Don't split "Mr.", "Dr."
+        # 3. Lookbehind (?<=\.|\?|\!): Split after ., ?, or !
+        # 4. \s: Match the whitespace after punctuation
+        self.split_pattern = re.compile(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!)\s')
 
     def _get_next_text_chunk(self):
         try:
@@ -414,10 +427,14 @@ class BertDatasetManager:
         while len(self.buffer) < min_sentences:
             text = self._get_next_text_chunk()
             if not text: continue
-            sentences = text.split('.')
+            
+            # Use smarter regex splitting
+            sentences = self.split_pattern.split(text)
+            
             for s in sentences:
                 s = s.strip()
-                if len(s) > 10:
+                # Basic cleaning: remove empty lines, very short noise, or headers
+                if len(s) > 10 and "=====" not in s:
                     ids = self.tokenizer.encode(s)
                     if len(ids) < self.seq_len - 3:
                         self.buffer.append(ids)
@@ -509,10 +526,17 @@ class BPETokenizerManager:
         
         def batch_iterator():
             for name, text_col in dataset_config.items():
-                ds = load_dataset(name, split='train', streaming=True)
-                for i, item in enumerate(ds):
-                    if i > 10000: break 
-                    yield item.get(text_col, '')
+                try:
+                    if 'wikipedia' in name:
+                        ds = load_dataset(name, "20220301.en", split='train', streaming=True, trust_remote_code=True)
+                    else:
+                        ds = load_dataset(name, split='train', streaming=True, trust_remote_code=True)
+                        
+                    for i, item in enumerate(ds):
+                        if i > 10000: break 
+                        yield item.get(text_col, '')
+                except Exception:
+                    continue
 
         tokenizer.train_from_iterator(batch_iterator(), trainer=trainer)
         tokenizer.save(self.model_path)
@@ -527,9 +551,12 @@ class BPETokenizerManager:
 def train():
     cfg = ModelConfig()
     
-    # Updated: Now a dictionary mapping dataset_name -> text_column_name
+    # UPDATED CONFIGURATION:
+    # 1. Wikipedia: For factual density and complex sentence structures.
+    # 2. BookCorpus: For narrative flow and dialogue.
     DATASET_CONFIG = {
-        'HuggingFaceFW/fineweb-edu': 'text'
+        'wikipedia': 'text',
+        'bookcorpus': 'text'
     }
 
     os.environ['WANDB_API_KEY'] = WANDB_API_KEY
