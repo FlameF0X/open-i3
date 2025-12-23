@@ -172,6 +172,16 @@ model.load_state_dict(torch.load("i3_bert_checkpoints/i3_bert_model_116m.pt"))
 - JIT-compiled WKV kernel
 - Faster than equivalent full-attention model
 - Trade-off between efficiency (RWKV) and capability (attention)
+- 
+## Benchmark
+
+|Metric                    | i3-BERT-v1      | i3-BERT-v2     |
+|--------------------------|-----------------|---------------|
+|Perplexity                | 89611.9056      | 1031307.4302 |  
+|NSP Accuracy              | 49.55%          | 50.64%      |   
+|MLM Loss                  | 11.4032         | 13.8463    |    
+|NSP Loss                  | 0.7417          | 1.7865    |     
+|Throughput (tokens/sec)   | 25173           | 26916    |
 
 ## Customization
 
