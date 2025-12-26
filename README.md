@@ -1,6 +1,6 @@
 # open-i3
 
-The home of i3 LM family!
+The home of the open-source side of the i3 AI models!
 
 ## Star History
 
