@@ -15,25 +15,25 @@ from transformers import CLIPTokenizer
 # ============================================================================
 # CONFIGURATION & HYPERPARAMETERS
 # ============================================================================
-# STRATEGY: Scaled-up hybrid architecture combining ResNet vision features with
-# a dual RWKV-Attention text encoder for CLIP-style contrastive pre-training.
+# STRATEGY: Scaled-up hybrid architecture combining a ResNet-Bottleneck vision 
+# backbone with a dual RWKV-Attention text encoder for CLIP-style pre-training.
 WANDB_PROJECT = "i3-rwkv-clip-hybrid-large"
-CHECKPOINT_DIR = "checkpoints"
+SAVE_DIR = "checkpoints"
 
 class Config:
     d_model = 768
-    n_rwkv_layers = 12   # Deep recurrent context for text
-    n_attn_layers = 4    # Top-level global reasoning for text
+    n_rwkv = 12          # Recurrent layers for deep context
+    n_attn = 4           # Transformer layers for global reasoning
     n_heads = 12
     ffn_mult = 4
-    max_len = 77         # Standard CLIP context length
+    max_len = 77         # Standard CLIP context window
     batch_size = 32
     learning_rate = 5e-5
     max_iters = 2000
     image_size = 224
 
 # ============================================================================
-# 1. CORE RWKV ENGINE (JIT OPTIMIZED)
+# 1. RWKV CORE ENGINE (JIT OPTIMIZED)
 # ============================================================================
 @torch.jit.script
 def rwkv_linear_attention(B: int, T: int, C: int, 
@@ -41,12 +41,12 @@ def rwkv_linear_attention(B: int, T: int, C: int,
                           w: torch.Tensor, u: torch.Tensor,
                           state_init: torch.Tensor):
     """
-    JIT-Compiled WKV Kernel for RWKV v4.
+    JIT-Compiled WKV Kernel for Linear-Time Attention.
     
     UNDER THE HOOD:
-    Implements the linear attention mechanism O(T). It uses a time-decaying 
-    state (w) and a 'first-token' bonus (u) to maintain context without
-    the quadratic memory cost of standard transformers.
+    Implements the RWKV v4 WKV logic. By iterating through time O(T) 
+    and maintaining a cumulative state, it achieves Transformer-like 
+    performance without the quadratic O(T^2) memory bottleneck.
     """
     y = torch.zeros_like(v)
     state_aa = torch.zeros(B, C, dtype=torch.float32, device=r.device)
@@ -56,7 +56,7 @@ def rwkv_linear_attention(B: int, T: int, C: int,
     for t in range(T):
         rt, kt, vt = r[:, t], k[:, t], v[:, t]
         
-        # Output calculation with numerical stability
+        # Output logic
         ww = u + state_pp
         p = torch.maximum(ww, kt)
         e1 = torch.exp(ww - p)
@@ -64,7 +64,7 @@ def rwkv_linear_attention(B: int, T: int, C: int,
         wkv = (state_aa * e1 + vt * e2) / (state_bb * e1 + e2 + 1e-6)
         y[:, t] = wkv
         
-        # State update (decay existing state + add current input)
+        # State update logic
         ww = w + state_pp
         p = torch.maximum(ww, kt)
         e1 = torch.exp(ww - p)
@@ -75,15 +75,13 @@ def rwkv_linear_attention(B: int, T: int, C: int,
     return y
 
 class RWKVTimeMix(nn.Module):
-    """Captures temporal dependencies via learnable time-shifting and WKV."""
     def __init__(self, d_model):
         super().__init__()
-        self.time_decay = nn.Parameter(torch.uniform_(torch.empty(d_model), -6, -3))
+        self.time_decay = nn.Parameter(torch.ones(d_model).uniform_(-6, -3))
         self.time_first = nn.Parameter(torch.ones(d_model))
         self.time_mix_k = nn.Parameter(torch.ones(1, 1, d_model))
         self.time_mix_v = nn.Parameter(torch.ones(1, 1, d_model))
         self.time_mix_r = nn.Parameter(torch.ones(1, 1, d_model))
-        
         self.key = nn.Linear(d_model, d_model, bias=False)
         self.value = nn.Linear(d_model, d_model, bias=False)
         self.receptance = nn.Linear(d_model, d_model, bias=False)
@@ -91,39 +89,34 @@ class RWKVTimeMix(nn.Module):
 
     def forward(self, x):
         B, T, C = x.size()
-        # Time-Shift: Mix token t with t-1
         xx = torch.cat([torch.zeros((B, 1, C), device=x.device), x[:, :-1]], dim=1)
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xv = x * self.time_mix_v + xx * (1 - self.time_mix_v)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
-        
         k, v = self.key(xk), self.value(xv)
         r = torch.sigmoid(self.receptance(xr))
-        
         w, u = -torch.exp(self.time_decay), self.time_first
         state_init = torch.full((B, C), -1e30, device=x.device)
         rwkv = rwkv_linear_attention(B, T, C, r, k, v, w, u, state_init)
         return self.output(r * rwkv)
 
 class RWKVChannelMix(nn.Module):
-    """FFN-style block with temporal gating."""
     def __init__(self, d_model, ffn_mult=4):
         super().__init__()
         self.time_mix_k = nn.Parameter(torch.ones(1, 1, d_model))
         self.time_mix_r = nn.Parameter(torch.ones(1, 1, d_model))
-        self.key = nn.Linear(d_model, d_model * ffn_mult, bias=False)
+        hidden_sz = d_model * ffn_mult
+        self.key = nn.Linear(d_model, hidden_sz, bias=False)
         self.receptance = nn.Linear(d_model, d_model, bias=False)
-        self.value = nn.Linear(d_model * ffn_mult, d_model, bias=False)
+        self.value = nn.Linear(hidden_sz, d_model, bias=False)
 
     def forward(self, x):
         B, T, C = x.size()
         xx = torch.cat([torch.zeros((B, 1, C), device=x.device), x[:, :-1]], dim=1)
         xk = x * self.time_mix_k + xx * (1 - self.time_mix_k)
         xr = x * self.time_mix_r + xx * (1 - self.time_mix_r)
-        
         k = torch.square(torch.relu(self.key(xk)))
-        r = torch.sigmoid(self.receptance(xr))
-        return r * self.value(k)
+        return torch.sigmoid(self.receptance(xr)) * self.value(k)
 
 class RWKVBlock(nn.Module):
     def __init__(self, d_model):
@@ -139,33 +132,47 @@ class RWKVBlock(nn.Module):
         return x
 
 # ============================================================================
-# 2. VISION ENCODER (CNN BACKBONE)
+# 2. VISION ENCODER (RESNET-BOTTLENECK)
 # ============================================================================
-class ResBlock(nn.Module):
-    def __init__(self, in_c, out_c, stride=1):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_c, out_c, 3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_c)
-        self.conv2 = nn.Conv2d(out_c, out_c, 3, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_c)
-        self.downsample = nn.Sequential(
-            nn.Conv2d(in_c, out_c, 1, stride=stride, bias=False),
-            nn.BatchNorm2d(out_c)
-        ) if stride != 1 or in_c != out_c else nn.Identity()
+class Bottleneck(nn.Module):
+    """
+    Standard ResNet Bottleneck block.
+    
+    UNDER THE HOOD:
+    Uses 1x1 convolutions to compress and expand dimensions, allowing for
+    deeper networks with fewer parameters compared to standard residual blocks.
+    """
+    expansion = 4
+    def __init__(self, in_planes, planes, stride=1):
+        super(Bottleneck, self).__init__()
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(planes)
+        self.conv3 = nn.Conv2d(planes, self.expansion * planes, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(self.expansion * planes)
+
+        self.downsample = nn.Identity()
+        if stride != 1 or in_planes != self.expansion * planes:
+            self.downsample = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(self.expansion * planes)
+            )
 
     def forward(self, x):
-        identity = self.downsample(x)
         out = F.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        return F.relu(out + identity)
+        out = F.relu(self.bn2(self.conv2(out)))
+        out = self.bn3(self.conv3(out))
+        out += self.downsample(x)
+        return F.relu(out)
 
 class VisionEncoderLarge(nn.Module):
     """
-    Standard ResNet-style Vision Encoder.
+    High-capacity CNN for visual feature extraction.
     
     STRATEGY:
-    Extracts high-level spatial features from images. We use a deep CNN
-    to project visual information into the same embedding space as text.
+    Maps images to a 768-dimensional latent space. The bottleneck structure
+    ensures compatibility with existing 2048-dim pre-pooled features.
     """
     def __init__(self, d_model=768):
         super().__init__()
@@ -175,15 +182,16 @@ class VisionEncoderLarge(nn.Module):
             nn.MaxPool2d(3, 2, 1)
         )
         self.layer1 = self._make_layer(64, 64, 3)
-        self.layer2 = self._make_layer(64, 128, 4, stride=2)
-        self.layer3 = self._make_layer(128, 256, 6, stride=2)
-        self.layer4 = self._make_layer(256, 512, 3, stride=2)
+        self.layer2 = self._make_layer(256, 128, 4, stride=2)
+        self.layer3 = self._make_layer(512, 256, 6, stride=2)
+        self.layer4 = self._make_layer(1024, 512, 3, stride=2)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512, d_model)
+        self.fc = nn.Linear(2048, d_model)
 
-    def _make_layer(self, in_c, out_c, blocks, stride=1):
-        layers = [ResBlock(in_c, out_c, stride)]
-        for _ in range(1, blocks): layers.append(ResBlock(out_c, out_c))
+    def _make_layer(self, in_planes, planes, blocks, stride=1):
+        layers = [Bottleneck(in_planes, planes, stride)]
+        for _ in range(1, blocks):
+            layers.append(Bottleneck(planes * 4, planes))
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -195,30 +203,27 @@ class VisionEncoderLarge(nn.Module):
         return self.fc(self.avgpool(x).flatten(1))
 
 # ============================================================================
-# 3. TEXT ENCODER (HYBRID RWKV-TRANSFORMER)
+# 3. HYBRID TEXT ENCODER
 # ============================================================================
 class HybridTextEncoderLarge(nn.Module):
     """
-    Hybrid RWKV-Transformer Text Encoder.
-    
-    STRATEGY:
-    - 12 RWKV Layers: Efficiently process long-range sequence context.
-    - 4 Attention Layers: Provide dense, global cross-token reasoning.
+    The i3-Hybrid Text Encoder.
     
     UNDER THE HOOD:
-    The model consumes tokens, builds a hidden state via RWKV, and then 
-    refines it using Attention before extracting the final pooled embedding.
+    Combines RWKV's linear context processing with multi-head attention's
+    global refinement. This hybrid approach captures both sequential flow
+    and complex inter-token relationships.
     """
     def __init__(self, vocab_size, d_model=768, n_rwkv=12, n_attn=4, max_len=77):
         super().__init__()
         self.token_embed = nn.Embedding(vocab_size, d_model)
         self.pos_embed = nn.Parameter(torch.zeros(1, max_len, d_model))
-        
         self.rwkv_layers = nn.ModuleList([RWKVBlock(d_model) for _ in range(n_rwkv)])
         self.attn_layers = nn.ModuleList([
             nn.TransformerEncoderLayer(
                 d_model=d_model, nhead=Config.n_heads, 
-                dim_feedforward=d_model*4, batch_first=True, activation="gelu"
+                dim_feedforward=d_model*Config.ffn_mult, 
+                batch_first=True, activation="gelu"
             ) for _ in range(n_attn)
         ])
         self.ln_final = nn.LayerNorm(d_model)
@@ -227,20 +232,12 @@ class HybridTextEncoderLarge(nn.Module):
         x = self.token_embed(x) + self.pos_embed[:, :x.size(1), :]
         for layer in self.rwkv_layers: x = layer(x)
         for layer in self.attn_layers: x = layer(x)
-        # Pooled representation: Take the last token state (common for CLIP)
         return self.ln_final(x[:, -1, :])
 
 # ============================================================================
-# 4. i3-CLIP-HYBRID WRAPPER
+# 4. i3-CLIP WRAPPER & TRAINING
 # ============================================================================
 class i3CLIPHybridLarge(nn.Module):
-    """
-    Dual-Encoder architecture for Contrastive Learning.
-    
-    STRATEGY:
-    Project images and text into a shared hypersphere. Maximize the cosine 
-    similarity of paired (Image, Text) while minimizing others in the batch.
-    """
     def __init__(self, vocab_size, d_model=768):
         super().__init__()
         self.visual = VisionEncoderLarge(d_model=d_model)
@@ -248,30 +245,21 @@ class i3CLIPHybridLarge(nn.Module):
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
     def forward(self, images, texts):
-        img_features = F.normalize(self.visual(images), dim=-1)
-        txt_features = F.normalize(self.textual(texts), dim=-1)
-        
-        # Calculate Logits (Contrastive Matrix)
-        logit_scale = self.logit_scale.exp()
-        logits_per_image = logit_scale * img_features @ txt_features.t()
-        logits_per_text = logits_per_image.t()
-        
-        return logits_per_image, logits_per_text
+        img_f = F.normalize(self.visual(images), dim=-1)
+        txt_f = F.normalize(self.textual(texts), dim=-1)
+        scale = self.logit_scale.exp()
+        logits = scale * img_f @ txt_f.t()
+        return logits, logits.t()
 
-# ============================================================================
-# 5. DATASET MANAGER
-# ============================================================================
 class CLIPDataset:
-    """Manages multi-modal data streaming and preprocessing."""
     def __init__(self, tokenizer, split='train', max_len=77):
         self.tokenizer = tokenizer
         self.max_len = max_len
         self.transform = transforms.Compose([
             transforms.Resize((Config.image_size, Config.image_size)),
             transforms.ToTensor(),
-            transforms.Normalize((0.481, 0.457, 0.408), (0.268, 0.261, 0.275))
+            transforms.Normalize((0.48, 0.45, 0.40), (0.26, 0.26, 0.27))
         ])
-        # Using a midjourney descriptive dataset for high quality text-image pairs
         self.ds = load_dataset("MohamedRashad/midjourney-detailed-prompts", split=split, streaming=True)
         self.iterator = iter(self.ds)
 
@@ -281,93 +269,67 @@ class CLIPDataset:
             try:
                 item = next(self.iterator)
                 if not isinstance(item['image'], Image.Image): continue
-                
-                # Image transformation
                 imgs.append(self.transform(item['image'].convert("RGB")))
-                
-                # Tokenization
                 tokens = self.tokenizer(
-                    item['image_description'], 
-                    padding='max_length', 
-                    truncation=True, 
-                    max_length=self.max_len, 
-                    return_tensors="pt"
+                    item['image_description'], padding='max_length', truncation=True, 
+                    max_length=self.max_len, return_tensors="pt"
                 ).input_ids[0]
                 txts.append(tokens)
             except StopIteration:
                 self.iterator = iter(self.ds)
         return torch.stack(imgs), torch.stack(txts)
 
-# ============================================================================
-# 6. TRAINING & UTILITIES
-# ============================================================================
 def save_checkpoint(model, optimizer, step, loss):
-    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-    path = os.path.join(CHECKPOINT_DIR, f"i3_clip_step_{step}.pt")
+    os.makedirs(SAVE_DIR, exist_ok=True)
+    save_path = os.path.join(SAVE_DIR, f"i3_clip_hybrid_step_{step}.pt")
     torch.save({
         'step': step,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'loss': loss,
-    }, path)
-    print(f"--> Saved checkpoint: {path}")
+        'config': vars(Config)
+    }, save_path)
+    print(f"--> Saved checkpoint: {save_path}")
 
 def train():
-    # Setup
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
-    model = i3CLIPHybridLarge(tokenizer.vocab_size, d_model=Config.d_model).to(device)
+    model = i3CLIPHybridLarge(tokenizer.vocab_size).to(device)
     
-    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"\n{'='*60}")
-    print(f"i3-CLIP-HYBRID INITIALIZED")
-    print(f"Total Trainable Parameters: {total_params / 1e6:.2f}M")
-    print(f"Device: {device}")
-    print(f"{'='*60}\n")
-    
+    # Checkpoint Recovery
+    if os.path.exists("pytorch_model.bin"):
+        print("Loading weights from pytorch_model.bin...")
+        model.load_state_dict(torch.load("pytorch_model.bin", map_location=device), strict=False)
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=Config.learning_rate)
     dataset = CLIPDataset(tokenizer)
     
-    # Optional: Log in via CLI before running or set WANDB_API_KEY env var
     wandb.init(project=WANDB_PROJECT, config=vars(Config))
     
     model.train()
-    best_loss = float('inf')
-    
+    print(f"Starting training on {device}...")
     for i in range(Config.max_iters):
-        start_time = time.time()
-        
-        # 1. Fetch Data
+        start = time.time()
         images, texts = dataset.get_batch(Config.batch_size)
         images, texts = images.to(device), texts.to(device)
         
-        # 2. Forward Pass
         logits_img, logits_txt = model(images, texts)
-        
-        # 3. Contrastive Loss (Symmetric Cross Entropy)
         labels = torch.arange(images.size(0), device=device)
-        loss_img = F.cross_entropy(logits_img, labels)
-        loss_txt = F.cross_entropy(logits_txt, labels)
-        loss = (loss_img + loss_txt) / 2
+        loss = (F.cross_entropy(logits_img, labels) + F.cross_entropy(logits_txt, labels)) / 2
         
-        # 4. Backward Pass
         optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         
-        # Logging
         if i % 10 == 0:
-            it_time = time.time() - start_time
+            it_time = time.time() - start
+            wandb.log({"train_loss": loss.item(), "step": i, "sec_per_it": it_time})
             print(f"Step {i:4d} | Loss: {loss.item():.4f} | {it_time:.2f}s/it")
-            wandb.log({"train_loss": loss.item(), "step": i, "secs_per_iter": it_time})
 
         if i % 500 == 0 and i > 0:
-            if loss < best_loss:
-                best_loss = loss.item()
-                save_checkpoint(model, optimizer, i, loss.item())
+            save_checkpoint(model, optimizer, i, loss.item())
 
-    print("Training Complete. Saving final model...")
     save_checkpoint(model, optimizer, Config.max_iters, loss.item())
 
 if __name__ == "__main__":
