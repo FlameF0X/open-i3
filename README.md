@@ -4,7 +4,7 @@ The home of the open-source side of the i3 AI models!
 
 !!! READ THE LICENCE AND NOTICE !!!
 
-and fotn forget to link the repo if you train a model using this code.
+and don't forget to link the repo if you train a model using this code.
 
 ## Star History
 
