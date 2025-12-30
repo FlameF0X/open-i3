@@ -1,7 +1,27 @@
 open-i3
-Copyright 2025 FlameF0X & i3-lab (Huggingface)
+Copyright 2025 FlameF0X & [i3-lab](https://huggingface.co/i3-lab)
 
-This product includes software developed at https://github.com/FlameF0X/open-i3.
-If you use, redistribute, or modify this code or the resulting 
-model weights, you must include a prominent link back to the 
-original repository: https://github.com/FlameF0X/open-i3
+This product includes software and architectural designs developed by 
+FlameF0X & i3-lab (https://github.com/FlameF0X/open-i3).
+
+---------------------------------------------------------------------------
+ATTRIBUTION REQUIREMENT
+---------------------------------------------------------------------------
+Under Section 4(d) of the Apache License 2.0, if you redistribute this 
+software, or any "Derivative Works" (including but not limited to 
+Language Model weights, CLIP-style encoders, or checkpoints trained 
+using this code), you must provide a prominent link back to the 
+original repository:
+
+    https://github.com/FlameF0X/open-i3
+
+For any model hosted on Hugging Face or similar platforms that utilizes the RWKV-Attention Text Generators (LM/LLM), Bi-RWKV-Attention BERT or RWKV-Attention CLIP or any upcoming architectures provided here, 
+this attribution must be clearly visible in the Model Card (README.md).
+
+---------------------------------------------------------------------------
+PROJECT COMPONENTS
+---------------------------------------------------------------------------
+This project includes original implementations of:
+* RWKV-Attention Hybrid Text Generators
+* RWKV-Attention Hybrid Fill-Mask hybrid
+* RWKV-Attention Hybrid CLIP
