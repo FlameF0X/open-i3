@@ -2,6 +2,10 @@
 
 The home of the open-source side of the i3 AI models!
 
+!!! READ THE LICENCE AND NOTICE !!!
+
+and fotn forget to link the repo if you train a model using this code.
+
 ## Star History
 
 <a href="https://www.star-history.com/#FlameF0X/open-i3&type=timeline&legend=bottom-right">
